@@ -58,7 +58,7 @@ body {
     border: 1px solid #ccc;
     border-radius: 4px;
     padding: 10px;
-    height: 300px;
+    height: 500px;
     overflow-y: auto;
     margin-bottom: 15px;
 }
@@ -168,4 +168,18 @@ button:hover {
     display: flex;
     align-items: center;
     gap: 20px; /* Adds space between radio options */
+}
+
+.chatbot-section button:disabled {
+    background-color: #95a5a6;
+    cursor: not-allowed;
+}
+
+.chatbot-error {
+    color: #e74c3c;
+    background-color: #fadbd8;
+    padding: 10px;
+    margin-bottom: 10px;
+    border-radius: 4px;
+    font-size: 14px;
 }

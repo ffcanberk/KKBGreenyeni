@@ -1,5 +1,5 @@
 import os
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, session
 import PyPDF2
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -8,8 +8,12 @@ from langchain_openai import OpenAIEmbeddings
 from langchain.chains import RetrievalQA
 from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import CharacterTextSplitter
+import logging
 
 app = Flask(__name__)
+app.secret_key = os.urandom(24)
+
+logging.basicConfig(level=logging.INFO)
 
 load_dotenv()
 
@@ -45,6 +49,8 @@ def prompt_func(query, n):
             "'General Greendex Info', 'Greendex Form Specific Inquiry', 'Greeting', 'Not Understandable Word/Phrase', 'Other Topic'"
             "Examples for these intents are: 'Greendex General info: Why is Greendex Important?', 'Greendex Form Specific Inquiry: How do I answer question 3.2?', 'Not Understandable Word/Phrase: hfixnsi' and 'Other Topic: What is your favourite car model?'"
             "Your response should ONLY be one of the categories provided, with no additional words. So your output format is only the category from one of the provided ones, with no additional words"
+            "Generate answers only and only in Turkish"
+            "Your max token limit is 500, generate responses accordingly."
             "Query: " + query
         )
     elif n == 2:
@@ -55,13 +61,13 @@ def prompt_func(query, n):
 
     return prompt
 
-def openaiAPI(prompt, max_tokens=100):
+def openaiAPI(prompt, max_tokens=500):
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
             {
                 "role": "system",
-                "content": "You are an AI user query classifier that is very experienced. You classify user inputs to one of the provided classes accurately"
+                "content": "You are an AI assistant that provides clear and coherent responses. Please ensure your responses are properly formatted without unnecessary spaces within words."
             },
             {
                 "role": "user",
@@ -70,17 +76,30 @@ def openaiAPI(prompt, max_tokens=100):
         ],
         max_tokens=max_tokens,
         temperature=0.5,
+        top_p=0.9,  # Adjust this to potentially improve coherence
+        frequency_penalty=0.0,
+        presence_penalty=0.6, # Increased to reduce repetitive text
     )
     return response.choices[0].message.content.strip()
 
-def get_best_matching_text(query):
+def get_best_matching_text(query, conversation_history):
+    logging.info(f"Received query: {query}")
+    logging.info(f"Conversation history: {conversation_history}")
+
     prompt = prompt_func(query, 1)
     category = openaiAPI(prompt)
+    logging.info(f"Classified category: {category}")
 
-    if (category == "General Greendex Info") or (category == "Greendex Form Specific Inquiry"):
+    result = ""  # Initialize result with a default value
+
+    if category in ["General Greendex Info", "Greendex Form Specific Inquiry"]:
         retriever = index.as_retriever()
         qa_chain = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", retriever=retriever)
-        result = qa_chain.run(query)
+        
+        # Include conversation history in the query
+        full_query = f"Conversation history: {conversation_history}\n\nCurrent query: {query}"
+        result = qa_chain.run(full_query)
+        
         if result == "Bilmiyorum":
             result = "Özür dilerim, aradığınız bilgiye şu anda sahip değilim. Size yardımcı olabileceğim başka bir konu veya soru varsa lütfen bana bildirin."
     elif category == "Greeting":
@@ -90,7 +109,10 @@ def get_best_matching_text(query):
         result = "Söylediğinizi tam olarak anlayamadım, lütfen tekrar sorabilir misiniz? Size en iyi şekilde yardımcı olmak istiyorum."
     elif category == "Other Topic":
         result = "Ne yazık ki bu konuda size yardımcı olamıyorum. Greendex Başvuru Formu ile ilgili herhangi bir sorunuz varsa, lütfen sormaktan çekinmeyin."
+    else:
+        result = "Üzgünüm, bu kategoriye uygun bir yanıt üretemiyorum. Lütfen sorunuzu farklı bir şekilde sormayı deneyin."
 
+    logging.info(f"Generated result: {result}")
     return result
 
 # Home route to render the main page
@@ -104,8 +126,28 @@ def ask_chatbot():
     data = request.get_json()
     question = data.get("question")
 
-    # Use the intent detection and response generation logic
-    answer = get_best_matching_text(question)
+    # Initialize or retrieve conversation history from session
+    if 'conversation_history' not in session:
+        session['conversation_history'] = []
+
+    # Add the new question to the conversation history
+    session['conversation_history'].append(f"User: {question}")
+
+    # Convert conversation history list to a string
+    conversation_history = "\n".join(session['conversation_history'])
+
+    # Use the intent detection and response generation logic with conversation history
+    answer = get_best_matching_text(question, conversation_history)
+
+    # Add the answer to the conversation history
+    session['conversation_history'].append(f"AI: {answer}")
+
+    # Limit the conversation history to the last 10 exchanges (5 questions and 5 answers)
+    if len(session['conversation_history']) > 10:
+        session['conversation_history'] = session['conversation_history'][-10:]
+
+    # Save the updated conversation history to the session
+    session.modified = True
 
     # Return the answer as JSON
     return jsonify({'answer': answer})
