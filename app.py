@@ -50,7 +50,7 @@ def prompt_func(query, n):
             "Examples for these intents are: 'Greendex General info: Why is Greendex Important?', 'Greendex Form Specific Inquiry: How do I answer question 3.2?', 'Not Understandable Word/Phrase: hfixnsi' and 'Other Topic: What is your favourite car model?'"
             "Your response should ONLY be one of the categories provided, with no additional words. So your output format is only the category from one of the provided ones, with no additional words"
             "Generate answers only and only in Turkish"
-            "Your max token limit is 500, generate responses accordingly."
+            "Your max token limit is 20, generate responses accordingly."
             "Query: " + query
         )
     elif n == 2:
@@ -61,13 +61,13 @@ def prompt_func(query, n):
 
     return prompt
 
-def openaiAPI(prompt, max_tokens=500):
+def openaiAPI(prompt, max_tokens=20):
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
             {
                 "role": "system",
-                "content": "You are an AI assistant that provides clear and coherent responses. Please ensure your responses are properly formatted without unnecessary spaces within words."
+                "content": "You are an AI user query classifier that is very experienced. You classify user inputs to one of the provided classes accurately."
             },
             {
                 "role": "user",
@@ -115,42 +115,41 @@ def get_best_matching_text(query, conversation_history):
     logging.info(f"Generated result: {result}")
     return result
 
-# Home route to render the main page
 @app.route('/')
 def home():
-    return render_template('index.html')
+    if 'conversation_history' not in session:
+        session['conversation_history'] = []
+    return render_template('index.html', conversation_history=session['conversation_history'])
 
-# Route to handle chatbot queries and generate responses using OpenAI
+@app.route('/get_conversation_history')
+def get_conversation_history():
+    return jsonify(session.get('conversation_history', []))
+
 @app.route('/ask_chatbot', methods=['POST'])
 def ask_chatbot():
     data = request.get_json()
     question = data.get("question")
 
-    # Initialize or retrieve conversation history from session
     if 'conversation_history' not in session:
         session['conversation_history'] = []
 
-    # Add the new question to the conversation history
-    session['conversation_history'].append(f"User: {question}")
+    session['conversation_history'].append({"role": "user", "content": question})
 
-    # Convert conversation history list to a string
-    conversation_history = "\n".join(session['conversation_history'])
+    conversation_history = "\n".join([f"{msg['role']}: {msg['content']}" for msg in session['conversation_history']])
 
-    # Use the intent detection and response generation logic with conversation history
     answer = get_best_matching_text(question, conversation_history)
 
-    # Add the answer to the conversation history
-    session['conversation_history'].append(f"AI: {answer}")
+    session['conversation_history'].append({"role": "ai", "content": answer})
 
-    # Limit the conversation history to the last 10 exchanges (5 questions and 5 answers)
     if len(session['conversation_history']) > 10:
         session['conversation_history'] = session['conversation_history'][-10:]
 
-    # Save the updated conversation history to the session
     session.modified = True
 
-    # Return the answer as JSON
-    return jsonify({'answer': answer})
+    return jsonify({
+        'answer': answer,
+        'conversation_history': session['conversation_history']
+    })
 
 if __name__ == '__main__':
     app.run(debug=True)
